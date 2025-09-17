@@ -2,9 +2,43 @@ const FLT_MAX: f32 = 3.40282346638528859812e+38;
 
 struct Uniforms {
     width: u32,
-    height: u32
+    height: u32,
+    frame_count: u32
 }
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct Rng {
+    state: u32
+}
+var<private> rng: Rng;
+
+fn init_rng(pixel: vec2u) {
+    let seed = (pixel.x + pixel.y * uniforms.width) ^ jenkins_hash(uniforms.frame_count);
+    rng.state = jenkins_hash(seed);
+}
+
+fn jenkins_hash(i: u32) -> u32 {
+    var x = i;
+    x += x << 10u;
+    x ^= x >> 6u;
+    x += x << 3u;
+    x ^= x >> 11u;
+    x += x << 15u;
+    return x;
+}
+
+fn xorshift32() -> u32 {
+    var x = rng.state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    rng.state = x;
+    return x;
+}
+
+fn rand_f32() -> f32 {
+    return bitcast<f32>(0x3f800000u | (xorshift32() >> 9u)) - 1.;
+}
 
 struct Intersection {
     normal: vec3f,
@@ -70,6 +104,9 @@ var<private> scene: Scene = Scene(
     Sphere(vec3(0.0, -100.5, -1.0), 100.0)
 );
 
+@group(0) @binding(1) var radiance_samples_old: texture_2d<f32>;
+@group(0) @binding(2) var radiance_samples_new: texture_storage_2d<rgba32float, write>;
+
 alias TriangleVertices = array<vec2f, 6>;
 var<private> vertices: TriangleVertices = TriangleVertices(
     vec2f(-1.0,  1.0),
@@ -85,11 +122,14 @@ var<private> vertices: TriangleVertices = TriangleVertices(
 }
 
 @fragment fn display_fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    init_rng(vec2u(pos.xy));
+
     let origin = vec3(0.0);
     let focus_distance = 1.0;
     let aspect_ratio = f32(uniforms.width) / f32(uniforms.height);
 
-    var uv = pos.xy / vec2f(f32(uniforms.width - 1u), f32(uniforms.height - 1u));
+    let offset = vec2(rand_f32() - 0.5, rand_f32() - 0.5);
+    var uv = (pos.xy + offset) / vec2f(f32(uniforms.width - 1u), f32(uniforms.height - 1u));
     uv = (2.0 * uv - vec2(1.0)) * vec2(aspect_ratio, -1.0);
 
     let direction = vec3(uv, -focus_distance);
@@ -97,15 +137,29 @@ var<private> vertices: TriangleVertices = TriangleVertices(
 
     var closest_hit = Intersection(vec3(0.0), FLT_MAX);
     for (var i = 0u; i < OBJECT_COUNT; i += 1u) {
-        let hit = intersect_sphere(ray, scene[i]);
+        let sphere = scene[i];
+        let hit = intersect_sphere(ray, sphere);
         if hit.t > 0.0 && hit.t < closest_hit.t {
             closest_hit = hit;
         }
     }
 
+    var radiance_samples: vec3f;
     if closest_hit.t < FLT_MAX {
-        return vec4(0.5 * closest_hit.normal + vec3(0.5), 1.0);
+        radiance_samples = vec3(0.5 * closest_hit.normal + vec3(0.5));
+    } else {
+        radiance_samples = sky_color(ray);
     }
 
-    return vec4(sky_color(ray), 1.0);
+    var old_sum: vec3f;
+    if uniforms.frame_count > 1 {
+        old_sum = textureLoad(radiance_samples_old, vec2u(pos.xy), 0).xyz;
+    } else {
+        old_sum = vec3(0.0);
+    }
+
+    let new_sum = radiance_samples + old_sum;
+    textureStore(radiance_samples_new, vec2u(pos.xy), vec4(new_sum, 0.0));
+
+    return vec4(new_sum / f32(uniforms.frame_count), 1.0);
 }
