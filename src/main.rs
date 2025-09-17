@@ -7,6 +7,8 @@ use {
     }
 };
 
+mod render;
+
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 
@@ -66,6 +68,7 @@ async fn main() -> Result<()> {
         .build(&event_loop)?;
 
     let (device, queue, surface) = connect_to_gpu(&window).await?;
+    let renderer = render::PathTracer::new(device, queue);
 
     event_loop.run(|event, control_handle| {
         control_handle.set_control_flow(ControlFlow::Poll);
@@ -76,6 +79,12 @@ async fn main() -> Result<()> {
                     let frame: wgpu::SurfaceTexture = surface
                         .get_current_texture()
                         .expect("failed to get current texture");
+
+                    let render_target = frame
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+
+                    renderer.render_frame(&render_target);
 
                     frame.present();
                     window.request_redraw();
