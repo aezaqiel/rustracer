@@ -1,4 +1,5 @@
 const FLT_MAX: f32 = 3.40282346638528859812e+38;
+const EPSILON: f32 = 1e-3;
 
 struct Uniforms {
     width: u32,
@@ -42,16 +43,39 @@ fn rand_f32() -> f32 {
 
 struct Intersection {
     normal: vec3f,
-    t: f32
+    t: f32,
+    color: vec3f
 }
 
 fn no_intersection() -> Intersection {
-    return Intersection(vec3(0.0), -1.0);
+    return Intersection(vec3(0.0), -1.0, vec3(0.0));
+}
+
+fn is_intersection_valid(hit: Intersection) -> bool {
+    return hit.t > 0.0;
+}
+
+fn intersect_scene(ray: Ray) -> Intersection {
+    var closest_hit = no_intersection();
+    closest_hit.t = FLT_MAX;
+
+    for (var i = 0u; i < OBJECT_COUNT; i += 1) {
+        let sphere = scene[i];
+        let hit = intersect_sphere(ray, sphere);
+        if hit.t > 0 && hit.t < closest_hit.t {
+            closest_hit = hit;
+        }
+    }
+    if closest_hit.t < FLT_MAX {
+        return closest_hit;
+    }
+    return no_intersection();
 }
 
 struct Sphere {
     center: vec3f,
-    radius: f32
+    radius: f32,
+    color: vec3f
 }
 
 fn intersect_sphere(ray: Ray, sphere: Sphere) -> Intersection {
@@ -72,15 +96,28 @@ fn intersect_sphere(ray: Ray, sphere: Sphere) -> Intersection {
 
     let t0 = (mb - sqrtd) * recip_a;
     let t1 = (mb + sqrtd) * recip_a;
-    let t = select(t1, t0, t0 > 0.0);
 
-    if t < 0.0 {
+    let t = select(t1, t0, t0 > EPSILON);
+    if t <= EPSILON {
         return no_intersection();
     }
 
     let p = point_on_ray(ray, t);
     let N = (p - sphere.center) / sphere.radius;
-    return Intersection(N, t);
+    return Intersection(N, t, sphere.color);
+}
+
+const MAX_PATH_LENGTH: u32 = 8u;
+struct Scatter {
+    attenuation: vec3f,
+    ray: Ray
+}
+
+fn scatter(input_ray: Ray, hit: Intersection) -> Scatter {
+    let scattered = reflect(input_ray.direction, hit.normal);
+    let output_ray = Ray(point_on_ray(input_ray, hit.t), scattered);
+    let attenuation = hit.color;
+    return Scatter(attenuation, output_ray);
 }
 
 struct Ray {
@@ -100,8 +137,8 @@ fn sky_color(ray: Ray) -> vec3f {
 const OBJECT_COUNT: u32 = 2;
 alias Scene = array<Sphere, OBJECT_COUNT>;
 var<private> scene: Scene = Scene(
-    Sphere(vec3(0.0, 0.0, -1.0), 0.5),
-    Sphere(vec3(0.0, -100.5, -1.0), 100.0)
+    Sphere(vec3(0.0, 0.0, -1.0), 0.5, vec3(0.5, 0.4, 0.0)),
+    Sphere(vec3(0.0, -100.5, -1.0), 100.0, vec3(0.7, 0.4, 0.6))
 );
 
 @group(0) @binding(1) var radiance_samples_old: texture_2d<f32>;
@@ -133,22 +170,22 @@ var<private> vertices: TriangleVertices = TriangleVertices(
     uv = (2.0 * uv - vec2(1.0)) * vec2(aspect_ratio, -1.0);
 
     let direction = vec3(uv, -focus_distance);
-    let ray = Ray(origin, direction);
+    var ray = Ray(origin, direction);
+    var throughput = vec3f(1.0);
+    var radiance_samples = vec3(0.0);
 
-    var closest_hit = Intersection(vec3(0.0), FLT_MAX);
-    for (var i = 0u; i < OBJECT_COUNT; i += 1u) {
-        let sphere = scene[i];
-        let hit = intersect_sphere(ray, sphere);
-        if hit.t > 0.0 && hit.t < closest_hit.t {
-            closest_hit = hit;
+    var path_length = 0u;
+    while path_length < MAX_PATH_LENGTH {
+        let hit = intersect_scene(ray);
+        if !is_intersection_valid(hit) {
+            radiance_samples += throughput * sky_color(ray);
+            break;
         }
-    }
 
-    var radiance_samples: vec3f;
-    if closest_hit.t < FLT_MAX {
-        radiance_samples = vec3(0.5 * closest_hit.normal + vec3(0.5));
-    } else {
-        radiance_samples = sky_color(ray);
+        let scattered = scatter(ray, hit);
+        throughput *= scattered.attenuation;
+        ray = scattered.ray;
+        path_length += 1u;
     }
 
     var old_sum: vec3f;
@@ -161,5 +198,7 @@ var<private> vertices: TriangleVertices = TriangleVertices(
     let new_sum = radiance_samples + old_sum;
     textureStore(radiance_samples_new, vec2u(pos.xy), vec4(new_sum, 0.0));
 
-    return vec4(new_sum / f32(uniforms.frame_count), 1.0);
+    let color = new_sum / f32(uniforms.frame_count);
+    // return vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
+    return vec4(color, 1.0);
 }

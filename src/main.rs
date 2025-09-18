@@ -13,7 +13,7 @@ const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 
 async fn connect_to_gpu(window: &Window) -> Result<(wgpu::Device, wgpu::Queue, wgpu::Surface)> {
-    use wgpu::TextureFormat::{Bgra8Unorm, Rgba8Unorm};
+    use wgpu::TextureFormat::{Bgra8UnormSrgb, Rgba8UnormSrgb};
 
     let instance = wgpu::Instance::default();
 
@@ -37,7 +37,7 @@ async fn connect_to_gpu(window: &Window) -> Result<(wgpu::Device, wgpu::Queue, w
     let format = caps
         .formats
         .into_iter()
-        .find(|it| matches!(it, Rgba8Unorm | Bgra8Unorm))
+        .find(|it| matches!(it, Rgba8UnormSrgb | Bgra8UnormSrgb))
         .context("could not find preferred texture format")?;
 
     let size = window.inner_size();

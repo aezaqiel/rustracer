@@ -169,7 +169,7 @@ fn create_display_pipeline(
             module: shader_module,
             entry_point: Some("display_fs"),
             targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Bgra8Unorm,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL
             })],
